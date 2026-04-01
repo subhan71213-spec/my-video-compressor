@@ -1,0 +1,11 @@
+{
+  "build": {
+    "nixpacksPlan": {
+      "phases": {
+        "setup": {
+          "nixPkgs": ["python311", "ffmpeg"]
+        }
+      }
+    }
+  }
+}
