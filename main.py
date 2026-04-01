@@ -1,54 +1,84 @@
 import os
 import subprocess
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- CONFIG ---
-TOKEN = os.getenv("BOT_TOKEN")
+API_ID = "1234567"  # my.telegram.org se lein
+API_HASH = "abcdef123456" # my.telegram.org se lein
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bhai, video bhejo! Phir main Thumbnail, Rename aur Compress kar dunga.")
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    video_file = await update.message.video.get_file()
-    input_path = "input_video.mp4"
-    await video_file.download_to_drive(input_path)
+# Temporary storage for user data
+user_data = {}
+
+@app.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text("👋 Bhai, 2GB tak ki koi bhi video bhejo. Main compress kar dunga!")
+
+@app.on_message(filters.video | filters.document)
+async def handle_video(client, message):
+    file_id = message.video.file_id if message.video else message.document.file_id
+    file_name = message.video.file_name if message.video else message.document.file_name
     
-    await update.message.reply_text("Video mil gayi! Ab batao kitne MB mein compress karun? (Example: Type 800 for 800MB)")
-    context.user_data['file_path'] = input_path
+    msg = await message.reply_text("📥 Video download ho rahi hai... Sabar rakho.")
+    
+    # Download file
+    input_path = await client.download_media(message, file_name=file_name)
+    user_data[message.from_user.id] = {"path": input_path, "name": file_name}
+    
+    # Options Buttons
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Compress to 1300MB", callback_data="1300")],
+        [InlineKeyboardButton("Compress to 800MB", callback_data="800")],
+        [InlineKeyboardButton("Compress to 400MB", callback_data="400")]
+    ])
+    
+    await msg.edit_text(f"✅ Video mil gayi: {file_name}\nAb size select karo:", reply_markup=buttons)
 
-async def process_compression(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    target_mb = int(update.message.text)
-    input_path = context.user_data.get('file_path')
-    output_path = f"compressed_{target_mb}MB.mp4"
+@app.on_callback_query()
+async def callback_handler(client, callback_query):
+    user_id = callback_query.from_user.id
+    target_mb = int(callback_query.data)
+    data = user_data.get(user_id)
+    
+    if not data:
+        await callback_query.answer("Error: File not found!", show_alert=True)
+        return
 
-    # Get Duration
-    probe = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{input_path}"'
-    duration = float(subprocess.check_output(probe, shell=True))
+    input_path = data["path"]
+    output_path = f"compressed_{target_mb}mb_{data['name']}"
+    thumb_path = f"thumb_{user_id}.jpg"
 
-    # Bitrate Calculation
+    await callback_query.message.edit_text(f"⏳ {target_mb}MB mein conversion start ho gaya hai...")
+
+    # 1. Thumbnail nikalna (5th second se)
+    subprocess.run(f'ffmpeg -i "{input_path}" -ss 00:00:05 -vframes 1 "{thumb_path}" -y', shell=True)
+
+    # 2. Compression Logic
+    probe = subprocess.check_output(f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{input_path}"', shell=True)
+    duration = float(probe)
     bitrate = int((target_mb * 8192) / duration)
 
-    await update.message.reply_text(f"⏳ {target_mb}MB mein compress ho raha hai... Time lagega thoda.")
-
     # FFmpeg Command
-    cmd = f'ffmpeg -i "{input_path}" -b:v {bitrate}k -vcodec libx264 -preset fast -acodec aac -b:a 128k "{output_path}" -y'
+    cmd = f'ffmpeg -i "{input_path}" -b:v {bitrate}k -vcodec libx264 -preset ultrafast -acodec aac -b:a 128k "{output_path}" -y'
     subprocess.run(cmd, shell=True)
 
-    # Send Result
-    await update.message.reply_video(video=open(output_path, 'rb'), caption=f"Done! Compressed to {target_mb}MB")
-    
+    # 3. Uploading back to Telegram
+    await callback_query.message.edit_text("📤 Compression done! Ab upload ho raha hai...")
+    await client.send_video(
+        chat_id=callback_query.message.chat.id,
+        video=output_path,
+        thumb=thumb_path,
+        caption=f"✅ Compressed to {target_mb}MB\nOriginal: {data['name']}",
+        supports_streaming=True
+    )
+
     # Cleanup
-    os.remove(input_path)
-    os.remove(output_path)
+    if os.path.exists(input_path): os.remove(input_path)
+    if os.path.exists(output_path): os.remove(output_path)
+    if os.path.exists(thumb_path): os.remove(thumb_path)
 
-def main():
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_compression))
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
-  
+app.run()
