@@ -17,7 +17,6 @@ user_data = {}
 async def progress(current, total, message, text):
     try:
         percent = current * 100 / total
-        # Har 10% pe update taaki speed bani rahe
         if int(percent) % 10 == 0: 
             bar = "▓" * int(percent/10) + "░" * (10 - int(percent/10))
             await message.edit_text(f"{text}\n\n{bar} {round(percent, 2)}%")
@@ -37,7 +36,6 @@ async def track_compression(process, message, total_duration, out_file):
                         h, m, s = map(float, last_time.split(':'))
                         curr_dur = h * 3600 + m * 60 + s
                         percent = int((curr_dur / total_duration) * 100)
-                        # Flood wait se bachne ke liye har 10% pe update
                         if percent >= last_percent + 10: 
                             size = os.path.getsize(out_file) / (1024 * 1024) if os.path.exists(out_file) else 0
                             bar = "🟩" * int(percent/10) + "⬜" * (10 - int(percent/10))
@@ -54,7 +52,6 @@ async def handle_video(client, message):
     path = await client.download_media(message, progress=progress, progress_args=(msg, "📥 Downloading..."))
     
     user_data[message.from_user.id] = {"path": path, "size": file.file_size / (1024*1024)}
-    # FEATURE: RENAME
     await msg.edit_text("✅ Downloaded!\n\n📂 **Ab Naya Naam (Rename) bhejein:**\n(Example: Movie.mp4)")
 
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "status", "skip"]))
@@ -62,7 +59,6 @@ async def get_name(client, message):
     uid = message.from_user.id
     if uid in user_data and "name" not in user_data[uid]:
         user_data[uid]["name"] = message.text
-        # FEATURE: THUMBNAIL
         await message.reply_text("🖼️ **Ab Thumbnail bhejein ya /skip karein:**")
 
 @app.on_message(filters.private & (filters.photo | filters.command("skip")))
@@ -73,7 +69,6 @@ async def get_thumb(client, message):
     user_data[uid]["thumb"] = await client.download_media(message.photo) if message.photo else None
     
     size = user_data[uid]["size"]
-    # FEATURE: ALL BUTTONS (1500MB to 100MB)
     options = [1500, 1000, 700, 500, 400, 300, 200, 100]
     btns = []
     row = []
@@ -101,7 +96,6 @@ async def process_video(client, query):
     msg = await query.message.edit_text(f"⚙️ **Processing to {target_mb}MB...**")
     
     try:
-        # Check for FFmpeg
         ff_path = "ffmpeg"
         fp_path = "ffprobe"
 
@@ -109,23 +103,32 @@ async def process_video(client, query):
         duration = float(probe)
         bitrate = int((target_mb * 8192) / duration)
         
-        # FEATURE: ULTRAFAST SPEED + THREADS
         cmd = f'{ff_path} -i "{data["path"]}" -b:v {bitrate}k -vcodec libx264 -preset ultrafast -threads 0 "{out}" -y > ffmpeg_log.txt 2>&1'
         
         process = subprocess.Popen(cmd, shell=True)
         await track_compression(process, msg, duration, out)
         process.wait()
         
+        # Duration Fix (Taki video me time dikhe)
+        try:
+            p_probe = subprocess.check_output([fp_path, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', out])
+            video_duration = int(float(p_probe))
+        except:
+            video_duration = 0
+
         await msg.edit_text("📤 **Uploading...**")
+        
         await client.send_video(
             chat_id=query.message.chat.id, 
             video=out, 
+            duration=video_duration,
             thumb=data.get("thumb"),
-            caption=f"✅ **Done Shakeel Bhai!**\n📂 `{out}`\n🎯 Target: {target_mb}MB",
+            caption=f"📂 `{out}`",
             supports_streaming=True,
             progress=progress, 
             progress_args=(msg, "📤 Uploading...")
         )
+
     except Exception as e:
         await msg.edit_text(f"❌ Error: {e}")
     
