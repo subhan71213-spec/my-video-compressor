@@ -42,7 +42,6 @@ async def handle_video(client, message):
     
     user_data[message.from_user.id] = {"path": input_path, "name": file_name, "size": file_size_mb}
 
-    # Dynamic Buttons (Sirf small size options dikhayega)
     options = [1900, 1700, 1500, 1300, 1100, 900, 700, 500, 400, 300, 200, 100]
     buttons = []
     row = []
@@ -52,12 +51,21 @@ async def handle_video(client, message):
             if len(row) == 3:
                 buttons.append(row)
                 row = []
+    
     if row: buttons.append(row)
+
+    # अगर कोई बटन नहीं बना (छोटी वीडियो के लिए)
+    if not buttons:
+        buttons.append([
+            InlineKeyboardButton("Compress 50%", callback_data=str(int(file_size_mb/2))),
+            InlineKeyboardButton("Compress 75%", callback_data=str(int(file_size_mb/4)))
+        ])
 
     await msg.edit_text(
         f"✅ Downloaded: {file_name}\nSize: {round(file_size_mb, 2)} MB\n\nAb target size select karo:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
+
 
 @app.on_callback_query()
 async def callback_handler(client, callback_query):
