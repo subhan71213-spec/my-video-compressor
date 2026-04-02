@@ -5,7 +5,6 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- CONFIG ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -16,8 +15,7 @@ user_data = {}
 # --- START ---
 @app.on_message(filters.command("start") & filters.private)
 async def start(client, message):
-    user_name = message.from_user.first_name
-    await message.reply_text(f"👋 Hi {user_name}!\n\nSend video → Rename → Compress 🚀")
+    await message.reply_text("👋 Hi!\nSend video → Rename → Compress 🚀")
 
 # --- PROGRESS ---
 async def progress(current, total, message, text):
@@ -25,7 +23,7 @@ async def progress(current, total, message, text):
         percent = current * 100 / total
         if int(percent) % 15 == 0:
             bar = "▓" * int(percent/10) + "░" * (10 - int(percent/10))
-            await message.edit_text(f"{text}\n\n{bar} {round(percent,2)}%")
+            await message.edit_text(f"{text}\n\n{bar} {round(percent, 2)}%")
     except:
         pass
 
@@ -45,15 +43,13 @@ async def track_compression(process, message, total_duration, out_file):
 
                         if percent >= last_percent + 15:
                             size = os.path.getsize(out_file)/(1024*1024) if os.path.exists(out_file) else 0
-                            await message.edit_text(
-                                f"🚀 Compressing...\n\n📊 {percent}%\n📦 {round(size,2)} MB"
-                            )
+                            await message.edit_text(f"🚀 Compressing...\n\n📊 {percent}%\n📦 {round(size,2)} MB")
                             last_percent = percent
         except:
             pass
         await asyncio.sleep(15)
 
-# --- RECEIVE VIDEO ---
+# --- RECEIVE ---
 @app.on_message(filters.private & (filters.video | filters.document))
 async def handle_video(client, message):
     msg = await message.reply_text("📥 Downloading...")
@@ -65,10 +61,9 @@ async def handle_video(client, message):
     )
 
     user_data[message.from_user.id] = {"path": path}
-
     await msg.edit_text("✅ Downloaded!\n\n📂 Send new file name:")
 
-# --- GET NAME ---
+# --- NAME ---
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "skip"]))
 async def get_name(client, message):
     uid = message.from_user.id
@@ -88,20 +83,28 @@ async def get_thumb(client, message):
     else:
         user_data[uid]["thumb"] = None
 
-    btns = [
-        [
+    size = os.path.getsize(user_data[uid]["path"]) / (1024 * 1024)
+
+    if size >= 1800:
+        btns = [[
             InlineKeyboardButton("🔥 1500MB", callback_data="1500"),
-            InlineKeyboardButton("🔥 1200MB", callback_data="1200"),
-        ],
-        [
+            InlineKeyboardButton("🔥 1200MB", callback_data="1200")
+        ]]
+    elif size >= 900:
+        btns = [[
             InlineKeyboardButton("⚖️ 800MB", callback_data="800"),
-            InlineKeyboardButton("⚖️ 700MB", callback_data="700"),
-        ],
-        [
-            InlineKeyboardButton("📦 500MB", callback_data="500"),
+            InlineKeyboardButton("⚖️ 600MB", callback_data="600")
+        ]]
+    elif size >= 500:
+        btns = [[
             InlineKeyboardButton("📦 400MB", callback_data="400"),
-        ]
-    ]
+            InlineKeyboardButton("📦 350MB", callback_data="350")
+        ]]
+    else:
+        btns = [[
+            InlineKeyboardButton("📦 300MB", callback_data="300"),
+            InlineKeyboardButton("📦 250MB", callback_data="250")
+        ]]
 
     await message.reply_text("🎯 Select target size:", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -115,7 +118,6 @@ async def process_video(client, query):
 
     target_mb = int(query.data)
 
-    # 🔥 QUALITY LOGIC
     if target_mb >= 1200:
         crf = 20
         preset = "medium"
@@ -126,9 +128,8 @@ async def process_video(client, query):
         crf = 26
         preset = "veryfast"
 
-    out = data["name"]
-    if "." not in out:
-        out += ".mp4"
+    # 🔥 SAFE OUTPUT FILE
+    out = f"{uid}_output.mp4"
 
     msg = await query.message.edit_text(f"⚙️ Processing {target_mb}MB...")
 
@@ -144,7 +145,6 @@ async def process_video(client, query):
 
         bitrate = int((target_mb * 8192) / duration)
 
-        # 🔥 FINAL COMMAND (ALL SAFE)
         cmd = f'''{ff_path} -i "{data["path"]}" 
 -map 0 
 -c:v libx264 
@@ -162,6 +162,11 @@ async def process_video(client, query):
         await track_compression(process, msg, duration, out)
         process.wait()
 
+        # ❗ FILE EXIST CHECK
+        if not os.path.exists(out):
+            await msg.edit_text("❌ File not generated (FFmpeg error)")
+            return
+
         await msg.edit_text("📤 Uploading...")
 
         await client.send_video(
@@ -169,7 +174,7 @@ async def process_video(client, query):
             video=out,
             duration=int(duration),
             thumb=data.get("thumb"),
-            caption=f"📂 {out}",
+            caption=f"📂 {data['name']}",
             supports_streaming=True,
             progress=progress,
             progress_args=(msg, "📤 Uploading...")
