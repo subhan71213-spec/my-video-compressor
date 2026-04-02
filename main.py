@@ -82,7 +82,7 @@ async def get_thumb(client, message):
         await message.reply_text("⏩ **Thumbnail Skipped.**")
     
     size = user_data[uid]["size"]
-    options = [1500, 1200, 1000, 700, 500, 400, 300, 200, 100]
+    options = [1900,1500, 1200, 1000, 700, 500, 400, 300, 200, 100]
     btns = []
     row = []
     for opt in options:
