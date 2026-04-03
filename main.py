@@ -67,7 +67,7 @@ async def get_name(client, message):
         user_data[uid]["name"] = f"{message.text}.mp4"
         await message.reply_text("🖼 Send a thumbnail photo or /skip")
 
-# --- THUMBNAIL & BUTTONS (Fixed safe version) ---
+# --- THUMBNAIL & BUTTONS (Safe single line version) ---
 @app.on_message(filters.private & (filters.photo | filters.command("skip")))
 async def get_thumb(client, message):
     uid = message.from_user.id
@@ -82,22 +82,15 @@ async def get_thumb(client, message):
     size = os.path.getsize(user_data[uid]["path"]) / (1024 * 1024)
     
     if size >= 1800:
-        btns = [[InlineKeyboardButton("🔥 1500MB", callback_data="1500"), 
-                 InlineKeyboardButton("🔥 1200MB", callback_data="1200")]]
+        btns = [[InlineKeyboardButton("🔥 1500MB", callback_data="1500"), InlineKeyboardButton("🔥 1200MB", callback_data="1200")]]
     elif size >= 900:
-        btns = [[InlineKeyboardButton("⚖️ 800MB", callback_data="800"), 
-                 InlineKeyboardButton("⚖️ 600MB", callback_data="600")]]
+        btns = [[InlineKeyboardButton("⚖️ 800MB", callback_data="800"), InlineKeyboardButton("⚖️ 600MB", callback_data="600")]]
     elif size >= 500:
-        btns = [[InlineKeyboardButton("📦 400MB", callback_data="400"), 
-                 InlineKeyboardButton("📦 350MB", callback_data="350")]]
+        btns = [[InlineKeyboardButton("📦 400MB", callback_data="400"), InlineKeyboardButton("📦 350MB", callback_data="350")]]
     else:
-        btns = [[InlineKeyboardButton("📦 300MB", callback_data="300"), 
-                 InlineKeyboardButton("📦 250MB", callback_data="250")]]
+        btns = [[InlineKeyboardButton("📦 300MB", callback_data="300"), InlineKeyboardButton("📦 250MB", callback_data="250")]]
 
-    await message.reply_text(
-        f"📏 Current: {round(size, 2)} MB\n🎯 Select Target Size:", 
-        reply_markup=InlineKeyboardMarkup(btns)
-    )
+    await message.reply_text(f"📏 Current: {round(size, 2)} MB\n🎯 Select Target Size:", reply_markup=InlineKeyboardMarkup(btns))
 
 # --- CORE COMPRESSION (720p + 480p + 360p) ---
 @app.on_callback_query()
@@ -116,9 +109,7 @@ async def process_video(client, query):
     msg = await query.message.edit_text(f"⚙️ Generating 720p, 480p & 360p...\n🎯 Target \~{target_mb}MB")
 
     try:
-        # Get duration
-        fp_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
-                  "-of", "default=noprint_wrappers=1:nokey=1", data['path']]
+        fp_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", data['path']]
         duration = float(subprocess.check_output(fp_cmd).decode().strip() or 0)
 
         if duration <= 0:
@@ -129,38 +120,25 @@ async def process_video(client, query):
 
         # 720p
         await msg.edit_text("🔄 Encoding 720p (Best)...")
-        cmd_720 = (
-            f'ffmpeg -i "{data["path"]}" -vf "scale=1280:-2" -c:v libx264 -preset veryfast -crf 23 '
-            f'-b:v {base_bitrate*2}k -maxrate {int(base_bitrate*2.2)}k -bufsize {int(base_bitrate*5)}k '
-            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 96k -threads 2 "{out_720}" -y > ffmpeg_log.txt 2>&1'
-        )
+        cmd_720 = f'ffmpeg -i "{data["path"]}" -vf "scale=1280:-2" -c:v libx264 -preset veryfast -crf 23 -b:v {base_bitrate*2}k -maxrate {int(base_bitrate*2.2)}k -bufsize {int(base_bitrate*5)}k -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 96k -threads 2 "{out_720}" -y > ffmpeg_log.txt 2>&1'
         process = subprocess.Popen(cmd_720, shell=True)
         await track_compression(process, msg, duration, out_720)
         process.wait()
 
         # 480p
         await msg.edit_text("🔄 Encoding 480p...")
-        cmd_480 = (
-            f'ffmpeg -i "{data["path"]}" -vf "scale=854:-2" -c:v libx264 -preset veryfast -crf 24 '
-            f'-b:v {base_bitrate}k -maxrate {int(base_bitrate*1.2)}k -bufsize {int(base_bitrate*3)}k '
-            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 64k -threads 2 "{out_480}" -y >> ffmpeg_log.txt 2>&1'
-        )
+        cmd_480 = f'ffmpeg -i "{data["path"]}" -vf "scale=854:-2" -c:v libx264 -preset veryfast -crf 24 -b:v {base_bitrate}k -maxrate {int(base_bitrate*1.2)}k -bufsize {int(base_bitrate*3)}k -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 64k -threads 2 "{out_480}" -y >> ffmpeg_log.txt 2>&1'
         process = subprocess.Popen(cmd_480, shell=True)
         await track_compression(process, msg, duration, out_480)
         process.wait()
 
         # 360p
         await msg.edit_text("🔄 Encoding 360p...")
-        cmd_360 = (
-            f'ffmpeg -i "{data["path"]}" -vf "scale=640:-2" -c:v libx264 -preset veryfast -crf 25 '
-            f'-b:v {int(base_bitrate*0.6)}k -maxrate {int(base_bitrate*0.8)}k -bufsize {int(base_bitrate*2)}k '
-            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 48k -threads 2 "{out_360}" -y >> ffmpeg_log.txt 2>&1'
-        )
+        cmd_360 = f'ffmpeg -i "{data["path"]}" -vf "scale=640:-2" -c:v libx264 -preset veryfast -crf 25 -b:v {int(base_bitrate*0.6)}k -maxrate {int(base_bitrate*0.8)}k -bufsize {int(base_bitrate*2)}k -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 48k -threads 2 "{out_360}" -y >> ffmpeg_log.txt 2>&1'
         process = subprocess.Popen(cmd_360, shell=True)
         await track_compression(process, msg, duration, out_360)
         process.wait()
 
-        # Upload all three
         await msg.edit_text("📤 Uploading 720p, 480p & 360p...")
 
         files = [(out_720, "720p"), (out_480, "480p"), (out_360, "360p")]
