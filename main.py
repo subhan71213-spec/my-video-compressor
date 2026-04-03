@@ -5,7 +5,7 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (Environment Variables) ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -13,7 +13,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 app = Client("VideoCompressorBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 user_data = {}
 
-# --- PROGRESS BAR ---
+# --- PROGRESS BAR HELPER ---
 async def progress(current, total, message, text):
     try:
         percent = current * 100 / total
@@ -36,36 +36,37 @@ async def track_compression(process, message, total_duration, out_file):
                         h, m, s = map(float, times[-1].split(':'))
                         curr = h*3600 + m*60 + s
                         percent = int((curr / total_duration) * 100)
-                        if percent >= last_percent + 10: 
-                            await message.edit_text(f"🚀 Compressing... {percent}%")
+                        if percent >= last_percent + 5: 
+                            size = os.path.getsize(out_file)/(1024*1024) if os.path.exists(out_file) else 0
+                            await message.edit_text(f"🚀 High Quality Compression: {percent}%\n📦 Current Size: {round(size,2)} MB")
                             last_percent = percent
         except:
             pass
-        await asyncio.sleep(8)
+        await asyncio.sleep(10)
 
-# --- START ---
+# --- START COMMAND ---
 @app.on_message(filters.command("start") & filters.private)
 async def start(client, message):
-    await message.reply_text("👋 Hi Shakeel!\nSend video to start. 🚀")
+    await message.reply_text("👋 Hi Shakeel!\nSend a video to start high-quality compression. 🚀")
 
 # --- RECEIVE VIDEO ---
 @app.on_message(filters.private & (filters.video | filters.document))
 async def handle_video(client, message):
-    msg = await message.reply_text("📥 Downloading...")
+    msg = await message.reply_text("📥 Downloading to server...")
     path = await client.download_media(message, progress=progress, progress_args=(msg, "📥 Downloading..."))
     user_data[message.from_user.id] = {"path": path}
-    await msg.edit_text("✅ Downloaded!\n\n📂 Ab sirf **Naya Naam** bhejein (without .mp4):")
+    await msg.edit_text("✅ Downloaded!\n\n📂 Send the **New File Name** (No extension needed):")
 
-# --- RENAME HANDLER (Fix: Only Name) ---
+# --- RENAME HANDLER ---
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "skip"]))
 async def get_name(client, message):
     uid = message.from_user.id
-    if uid in user_data and "name" not in user_data[uid]:
-        # Hum user ke naam ke peeche .mp4 khud laga denge
+    if uid in user_data and "raw_name" not in user_data[uid]:
+        user_data[uid]["raw_name"] = message.text
         user_data[uid]["name"] = f"{message.text}.mp4"
-        await message.reply_text("🖼 Ab thumbnail photo bhejein ya /skip karein:")
+        await message.reply_text("🖼 Send a thumbnail photo or /skip")
 
-# --- THUMBNAIL & BUTTONS ---
+# --- THUMBNAIL & SIZE BUTTONS (All Features) ---
 @app.on_message(filters.private & (filters.photo | filters.command("skip")))
 async def get_thumb(client, message):
     uid = message.from_user.id
@@ -77,10 +78,21 @@ async def get_thumb(client, message):
         user_data[uid]["thumb"] = None
 
     size = os.path.getsize(user_data[uid]["path"]) / (1024 * 1024)
-    btns = [[InlineKeyboardButton("📦 400MB", callback_data="400"), InlineKeyboardButton("📦 300MB", callback_data="300")]]
-    await message.reply_text(f"📏 File Size: {round(size, 2)} MB\n🎯 Target Size select karein:", reply_markup=InlineKeyboardMarkup(btns))
+    
+    # All Target Size Buttons
+    if size >= 1800:
+        btns = [[InlineKeyboardButton("🔥 1500MB", callback_data="1500"), InlineKeyboardButton("🔥 1200MB", callback_data="1200")]]
+    elif size >= 900:
+        btns = [[InlineKeyboardButton("⚖️ 800MB", callback_data="800"), InlineKeyboardButton("⚖️ 600MB", callback_data="600")]]
+    elif size >= 500:
+        btns = [[InlineKeyboardButton("📦 400MB", callback_data="400"), InlineKeyboardButton("📦 350MB", callback_data="350")]]
+    else:
+        btns = [[InlineKeyboardButton("📦 300MB", callback_data="300"), InlineKeyboardButton("📦 250MB", callback_data="250")]]
 
-# --- PROCESSING (Fix: File Generation) ---
+    await message.reply_text(f"📏 Current: {round(size, 2)} MB\n🎯 Select Target Size for Best Quality:", 
+                             reply_markup=InlineKeyboardMarkup(btns))
+
+# --- CORE COMPRESSION (Best Quality Logic) ---
 @app.on_callback_query()
 async def process_video(client, query):
     uid = query.from_user.id
@@ -88,48 +100,64 @@ async def process_video(client, query):
     if not data: return
 
     target_mb = int(query.data)
+    
+    # Quality Settings: CRF 23 is gold for quality. Preset 'medium' is better than 'veryfast'.
+    crf = 23 if target_mb >= 700 else 24
+    preset = "medium" 
+
     out = f"final_{uid}.mp4"
-    msg = await query.message.edit_text(f"⚙️ Compressing to {target_mb}MB... Please wait.")
+    msg = await query.message.edit_text(f"⚙️ Compressing to {target_mb}MB (High Quality Mode)...")
 
     try:
         # Get duration
         fp_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", data['path']]
         duration = float(subprocess.check_output(fp_cmd).decode().strip())
+        
+        # Bitrate Calculation
         bitrate = int((target_mb * 8192) / duration)
 
-        # 🔥 Speed fix: 'ultrafast' use kiya hai taaki jaldi ho
+        # 🔥 FIXED COMMAND: High Quality, No Error, Smooth Playback
         cmd = (
-            f'ffmpeg -i "{data["path"]}" -c:v libx264 -preset ultrafast -crf 27 '
-            f'-b:v {bitrate}k -pix_fmt yuv420p -c:a aac -b:a 128k '
-            f'-movflags +faststart "{out}" -y > ffmpeg_log.txt 2>&1'
+            f'ffmpeg -i "{data["path"]}" -c:v libx264 -preset {preset} -crf {crf} '
+            f'-maxrate {bitrate + 400}k -bufsize {bitrate * 2}k -pix_fmt yuv420p '
+            f'-profile:v high -level 4.1 -movflags +faststart '
+            f'-c:a aac -b:a 128k -threads 0 "{out}" -y > ffmpeg_log.txt 2>&1'
         )
 
         process = subprocess.Popen(cmd, shell=True)
         await track_compression(process, msg, duration, out)
         process.wait()
 
-        if not os.path.exists(out):
-            await msg.edit_text("❌ Error: File nahi ban payi. Command fail ho gaya.")
+        if not os.path.exists(out) or os.path.getsize(out) < 1000:
+            await msg.edit_text("❌ Error: Output file not generated.")
             return
 
-        await msg.edit_text("📤 Uploading...")
+        final_size = os.path.getsize(out) / (1024 * 1024)
+        await msg.edit_text(f"📤 Uploading High Quality Video... ({round(final_size, 2)} MB)")
+        
         await client.send_video(
             chat_id=query.message.chat.id,
             video=out,
             duration=int(duration),
             thumb=data.get("thumb"),
-            caption=f"✅ **Done!**\n📂 `{data['name']}`",
-            supports_streaming=True
+            caption=f"✅ **High Quality Compression**\n📂 `{data['raw_name']}`\n📊 Size: {round(final_size, 2)} MB",
+            supports_streaming=True,
+            progress=progress,
+            progress_args=(msg, "📤 Uploading...")
         )
         await msg.delete()
 
     except Exception as e:
         await msg.edit_text(f"❌ Error: {str(e)}")
 
-    # Cleanup
-    for f in [data['path'], out, data.get("thumb"), "ffmpeg_log.txt"]:
-        if f and os.path.exists(f): os.remove(f)
+    # CLEANUP
+    if os.path.exists("ffmpeg_log.txt"): os.remove("ffmpeg_log.txt")
+    for file in [data['path'], out, data.get("thumb")]:
+        if file and os.path.exists(file):
+            try: os.remove(file)
+            except: pass
     user_data.pop(uid, None)
 
+# --- RUN BOT ---
 if __name__ == "__main__":
     app.run()
