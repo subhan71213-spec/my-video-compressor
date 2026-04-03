@@ -59,7 +59,7 @@ async def handle_video(client, message):
     await msg.edit_text("✅ Downloaded!\n\n📂 Send the **New File Name** (No extension needed):")
 
 # --- RENAME HANDLER ---
-@app.on_message(filters.private & filters.text & ~filters.command(["start", "skip"]))
+@app.on_message(filters.private & filters.text & \~filters.command(["start", "skip"]))
 async def get_name(client, message):
     uid = message.from_user.id
     if uid in user_data and "raw_name" not in user_data[uid]:
@@ -91,7 +91,7 @@ async def get_thumb(client, message):
 
     await message.reply_text(f"📏 Current: {round(size, 2)} MB\n🎯 Select Target Size:", reply_markup=InlineKeyboardMarkup(btns))
 
-# --- CORE COMPRESSION ---
+# --- CORE COMPRESSION (Updated for High Quality + Target Size) ---
 @app.on_callback_query()
 async def process_video(client, query):
     uid = query.from_user.id
@@ -99,27 +99,43 @@ async def process_video(client, query):
     if not data: return
 
     target_mb = int(query.data)
-    crf = 24 
-    preset = "fast" # Optimized for Railway servers
     out = f"vid_{uid}_{int(time.time())}.mp4"
 
-    msg = await query.message.edit_text(f"⚙️ High Quality Compression to {target_mb}MB...")
+    msg = await query.message.edit_text(f"⚙️ High Quality Compression to {target_mb}MB...\n⏳ Processing (Quality Priority)...")
 
     try:
         # Get duration using ffprobe
         fp_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", data['path']]
         duration = float(subprocess.check_output(fp_cmd).decode().strip())
         
-        # Bitrate calculation
+        if duration <= 0:
+            await msg.edit_text("❌ Could not get video duration!")
+            return
+
+        # Bitrate calculation for target size
         bitrate = int((target_mb * 8192) / duration)
 
-        # 🔥 FINAL STABLE COMMAND
+        # Smart CRF & Preset for MINIMAL quality loss
+        if target_mb >= 1000:          # 1200MB or 1500MB
+            crf = 22
+            preset = "faster"
+        elif target_mb >= 600:         # 600MB - 800MB
+            crf = 23
+            preset = "veryfast"
+        elif target_mb >= 350:         # 350MB - 400MB
+            crf = 24
+            preset = "veryfast"
+        else:                          # 250MB - 300MB
+            crf = 25
+            preset = "veryfast"
+
+        # 🔥 IMPROVED COMMAND (High Quality + Better Speed)
         cmd = (
             f'ffmpeg -i "{data["path"]}" -c:v libx264 -preset {preset} -crf {crf} '
-            f'-b:v {bitrate}k -maxrate {bitrate + 400}k -bufsize {bitrate * 2}k '
+            f'-b:v {bitrate}k -maxrate {int(bitrate * 1.2)}k -bufsize {int(bitrate * 2.5)}k '
             f'-pix_fmt yuv420p -profile:v high -level 4.1 '
-            f'-movflags +faststart -c:a aac -b:a 128k '
-            f'-threads 1 "{out}" -y > ffmpeg_log.txt 2>&1'
+            f'-movflags +faststart -c:a aac -b:a 96k '
+            f'-threads 2 "{out}" -y > ffmpeg_log.txt 2>&1'
         )
 
         process = subprocess.Popen(cmd, shell=True)
@@ -144,7 +160,7 @@ async def process_video(client, query):
             video=out,
             duration=int(duration),
             thumb=data.get("thumb"),
-            caption=f"✅ **Done!**\n📂 `{data['raw_name']}`\n📊 Size: {round(final_size, 2)} MB",
+            caption=f"✅ **Done!**\n📂 `{data['raw_name']}`\n📊 Size: {round(final_size, 2)} MB\n🎥 Quality: High (Minimal Loss)",
             supports_streaming=True,
             progress=progress,
             progress_args=(msg, "📤 Uploading...")
