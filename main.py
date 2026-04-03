@@ -53,8 +53,10 @@ async def handle_video(client, message):
     user_data[message.from_user.id] = {"path": path}
     await msg.edit_text("✅ Downloaded!\n\n📂 Send the **New File Name** (No extension needed):")
 
-@app.on_message(filters.private & filters.text & \~filters.command(["start", "skip"]))
+@app.on_message(filters.private & filters.text)
 async def get_name(client, message):
+    if message.text.startswith("/"):
+        return
     uid = message.from_user.id
     if uid in user_data and "raw_name" not in user_data[uid]:
         user_data[uid]["raw_name"] = message.text
