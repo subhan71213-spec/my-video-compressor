@@ -71,7 +71,8 @@ async def get_name(client, message):
 @app.on_message(filters.private & (filters.photo | filters.command("skip")))
 async def get_thumb(client, message):
     uid = message.from_user.id
-    if uid not in user_data: return
+    if uid not in user_data: 
+        return
 
     if message.photo:
         user_data[uid]["thumb"] = await client.download_media(message.photo)
@@ -91,7 +92,7 @@ async def get_thumb(client, message):
 
     await message.reply_text(f"📏 Current: {round(size, 2)} MB\n🎯 Select Target Size:", reply_markup=InlineKeyboardMarkup(btns))
 
-# --- CORE COMPRESSION (Updated for High Quality + Target Size) ---
+# --- CORE COMPRESSION (Now generates 720p + 480p + 360p) ---
 @app.on_callback_query()
 async def process_video(client, query):
     uid = query.from_user.id
@@ -99,83 +100,92 @@ async def process_video(client, query):
     if not data: return
 
     target_mb = int(query.data)
-    out = f"vid_{uid}_{int(time.time())}.mp4"
+    base_name = data.get("raw_name", "video")
+    out_720 = f"{base_name}_720p.mp4"
+    out_480 = f"{base_name}_480p.mp4"
+    out_360 = f"{base_name}_360p.mp4"
 
-    msg = await query.message.edit_text(f"⚙️ High Quality Compression to {target_mb}MB...\n⏳ Processing (Quality Priority)...")
+    msg = await query.message.edit_text(f"⚙️ Generating 3 Qualities...\n🎯 Target: {target_mb}MB (1080p input → 720p/480p/360p)")
 
     try:
-        # Get duration using ffprobe
+        # Get duration
         fp_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", data['path']]
-        duration = float(subprocess.check_output(fp_cmd).decode().strip())
-        
+        duration = float(subprocess.check_output(fp_cmd).decode().strip() or 0)
+
         if duration <= 0:
             await msg.edit_text("❌ Could not get video duration!")
             return
 
-        # Bitrate calculation for target size
-        bitrate = int((target_mb * 8192) / duration)
+        # Base bitrate for target size (distributed across 3 files)
+        base_bitrate = int((target_mb * 8192) / (duration * 3))  # roughly divide for 3 files
 
-        # Smart CRF & Preset for MINIMAL quality loss
-        if target_mb >= 1000:          # 1200MB or 1500MB
-            crf = 22
-            preset = "faster"
-        elif target_mb >= 600:         # 600MB - 800MB
-            crf = 23
-            preset = "veryfast"
-        elif target_mb >= 350:         # 350MB - 400MB
-            crf = 24
-            preset = "veryfast"
-        else:                          # 250MB - 300MB
-            crf = 25
-            preset = "veryfast"
+        # Progress message update
+        await msg.edit_text("🔄 Encoding 720p (Best Quality)...")
 
-        # 🔥 IMPROVED COMMAND (High Quality + Better Speed)
-        cmd = (
-            f'ffmpeg -i "{data["path"]}" -c:v libx264 -preset {preset} -crf {crf} '
-            f'-b:v {bitrate}k -maxrate {int(bitrate * 1.2)}k -bufsize {int(bitrate * 2.5)}k '
-            f'-pix_fmt yuv420p -profile:v high -level 4.1 '
-            f'-movflags +faststart -c:a aac -b:a 96k '
-            f'-threads 2 "{out}" -y > ffmpeg_log.txt 2>&1'
+        # 720p
+        cmd_720 = (
+            f'ffmpeg -i "{data["path"]}" -vf "scale=1280:-2" -c:v libx264 -preset veryfast -crf 23 '
+            f'-b:v {base_bitrate*2}k -maxrate {int(base_bitrate*2.2)}k -bufsize {int(base_bitrate*5)}k '
+            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 96k -threads 2 "{out_720}" -y > ffmpeg_log.txt 2>&1'
         )
-
-        process = subprocess.Popen(cmd, shell=True)
-        await track_compression(process, msg, duration, out)
+        process = subprocess.Popen(cmd_720, shell=True)
+        await track_compression(process, msg, duration, out_720)
         process.wait()
 
-        # Check if file exists and is not empty
-        if not os.path.exists(out) or os.path.getsize(out) < 1000:
-            if os.path.exists("ffmpeg_log.txt"):
-                with open("ffmpeg_log.txt", "r") as f:
-                    err_log = f.read()[-300:] 
-                await msg.edit_text(f"❌ FFmpeg Error Log:\n`{err_log}`")
-            else:
-                await msg.edit_text("❌ Error: Output file not generated.")
-            return
-
-        final_size = os.path.getsize(out) / (1024 * 1024)
-        await msg.edit_text(f"📤 Uploading... ({round(final_size, 2)} MB)")
-        
-        await client.send_video(
-            chat_id=query.message.chat.id,
-            video=out,
-            duration=int(duration),
-            thumb=data.get("thumb"),
-            caption=f"✅ **Done!**\n📂 `{data['raw_name']}`\n📊 Size: {round(final_size, 2)} MB\n🎥 Quality: High (Minimal Loss)",
-            supports_streaming=True,
-            progress=progress,
-            progress_args=(msg, "📤 Uploading...")
+        # 480p
+        await msg.edit_text("🔄 Encoding 480p...")
+        cmd_480 = (
+            f'ffmpeg -i "{data["path"]}" -vf "scale=854:-2" -c:v libx264 -preset veryfast -crf 24 '
+            f'-b:v {base_bitrate}k -maxrate {int(base_bitrate*1.2)}k -bufsize {int(base_bitrate*3)}k '
+            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 64k -threads 2 "{out_480}" -y >> ffmpeg_log.txt 2>&1'
         )
-        await msg.delete()
+        process = subprocess.Popen(cmd_480, shell=True)
+        await track_compression(process, msg, duration, out_480)
+        process.wait()
+
+        # 360p
+        await msg.edit_text("🔄 Encoding 360p (Smallest)...")
+        cmd_360 = (
+            f'ffmpeg -i "{data["path"]}" -vf "scale=640:-2" -c:v libx264 -preset veryfast -crf 25 '
+            f'-b:v {int(base_bitrate*0.6)}k -maxrate {int(base_bitrate*0.8)}k -bufsize {int(base_bitrate*2)}k '
+            f'-pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 48k -threads 2 "{out_360}" -y >> ffmpeg_log.txt 2>&1'
+        )
+        process = subprocess.Popen(cmd_360, shell=True)
+        await track_compression(process, msg, duration, out_360)
+        process.wait()
+
+        # Upload all three
+        await msg.edit_text("📤 Uploading 720p, 480p & 360p...")
+
+        files = [(out_720, "720p"), (out_480, "480p"), (out_360, "360p")]
+        for out_file, res in files:
+            if os.path.exists(out_file) and os.path.getsize(out_file) > 50000:
+                final_size = os.path.getsize(out_file) / (1024 * 1024)
+                await client.send_video(
+                    chat_id=query.message.chat.id,
+                    video=out_file,
+                    duration=int(duration),
+                    thumb=data.get("thumb"),
+                    caption=f"✅ **{res} Done!**\n📂 `{base_name}`\n📊 Size: {round(final_size, 2)} MB\n🎥 Quality: High",
+                    supports_streaming=True,
+                    progress=progress,
+                    progress_args=(msg, f"📤 Uploading {res}...")
+                )
+
+        await msg.edit_text("✅ All 3 qualities uploaded successfully!")
 
     except Exception as e:
         await msg.edit_text(f"❌ System Error: {str(e)}")
 
     # CLEANUP
-    if os.path.exists("ffmpeg_log.txt"): os.remove("ffmpeg_log.txt")
-    for file in [data.get('path'), out, data.get("thumb")]:
+    if os.path.exists("ffmpeg_log.txt"): 
+        os.remove("ffmpeg_log.txt")
+    for file in [data.get('path'), out_720, out_480, out_360, data.get("thumb")]:
         if file and os.path.exists(file):
-            try: os.remove(file)
-            except: pass
+            try: 
+                os.remove(file)
+            except: 
+                pass
     user_data.pop(uid, None)
 
 # --- RUN ---
